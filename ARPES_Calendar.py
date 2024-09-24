@@ -64,8 +64,8 @@ def main(wavenote_file):
             if ':' in m_ti.split(' ')[3]:
                 end_date = m_ti.split(' ')[0] + '-' + m_ti.split(' ')[1] + '-' + m_ti.split(' ')[2]
             else:
-                end_date = m_ti.split(' ')[4]
-            end = []
+                end_date = m_ti.split(' ')[0] + '-' + m_ti.split(' ')[1] + '-' + m_ti.split(' ')[3]
+            end = [end_date, end_time]
     try:
         service = build("calendar", "v3", credentials=creds)
 
