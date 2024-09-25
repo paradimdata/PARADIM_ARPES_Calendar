@@ -88,7 +88,7 @@ def main(wavenote_file = None):
                     lines = file.readlines()
                 os.remove(data_file)
                 start = [lines[28].split('=')[1].replace('\n',''),lines[29].split('=')[1].replace('\n','')]
-                username = lines[25].split('=')[1] + ' (#)ARPES'
+                username = lines[25].split('=')[1] + ' (#) ARPES'
                 instrument = lines[23].split('=')[1] + 'was used over this time period'
             elif count == length - 1:
                 end_file = os.path.join(os.path.dirname(wavenote_file), file)
