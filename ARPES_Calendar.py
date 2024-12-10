@@ -5,6 +5,7 @@ import os
 import time
 import pytz
 import argparse
+import re
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -76,7 +77,10 @@ def main(wavenote_file = None):
         for name in file_folder:
             if not '.pxt' in name:
                 file_folder.remove(name)
-        sorted_files = sorted(file_folder, key=lambda x: int(x.split('_')[1].split('.')[0]))
+        sorted_files = sorted(
+        file_folder,
+        key=lambda x: float(re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x)[-1]) if re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x) else 0
+        ) 
         length = len(sorted_files)
         for file in sorted_files:
             if count == 0:
