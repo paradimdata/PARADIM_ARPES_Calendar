@@ -42,12 +42,97 @@ def get_iso8601(year, month, day, hour, minute, second, timezone_str):
     localized_dt = timezone.localize(dt)
     return localized_dt.isoformat()
 
+def get_calendar_values(wavenote_file):
+    count = 0
+
+    file_folder = os.listdir(os.path.dirname(wavenote_file)) 
+    for name in file_folder:
+        if not '.pxt' in name:
+            file_folder.remove(name)
+    sorted_files = sorted(
+    file_folder,
+    key=lambda x: float(re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x)[-1]) if re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x) else 0
+    ) 
+    length = len(sorted_files)
+    for file in sorted_files:
+        if count == 0:
+            dataset = htmdec_formats.ARPESDataset.from_file(wavenote_file)
+            lines = dataset._metadata.split("\n")
+            folder = wavenote_file + '/../../../../..'
+            path = os.path.normpath(folder)
+            directory_name = os.path.basename(path.rstrip('/\\'))
+            name_array = directory_name.split()
+            for element in name_array:
+                if element.isdigit():
+                    project_number = element
+            start = [lines[28].split('=')[1].replace('\n',''),lines[29].split('=')[1].replace('\n','')]
+            if project_number:
+                username = lines[25].split('=')[1] + ' (#' + str(project_number) + ') ARPES'
+            else:
+                username = lines[25].split('=')[1] + ' (#) ARPES'
+            instrument = lines[23].split('=')[1] + 'was used over this time period'
+        elif count == length - 1:
+            end_file = os.path.join(os.path.dirname(wavenote_file), file)
+            ti_m = os.path.getmtime(end_file)
+            m_ti = time.ctime(ti_m) 
+            if ':' in m_ti.split(' ')[3]:
+                end_time = m_ti.split(' ')[3]
+            else:
+                end_time = m_ti.split(' ')[4]
+            if ':' in m_ti.split(' ')[3]:
+                end_date = m_ti.split(' ')[4] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[2]
+            else:
+                end_date = m_ti.split(' ')[5] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[3]
+            end = [end_date, end_time]
+        count += 1
+    
+    final_start = get_iso8601(int(start[0].split('-')[0]), int(start[0].split('-')[1]), int(start[0].split('-')[2]), 
+                                int(start[1].split(':')[0]), int(start[1].split(':')[1]), int(start[1].split(':')[2]), 'America/New_York')
+    final_end = get_iso8601(int(end[0].split('-')[0]), int(end[0].split('-')[1]), int(end[0].split('-')[2]), 
+                            int(end[1].split(':')[0]), int(end[1].split(':')[1]), int(end[1].split(':')[2]), 'America/New_York')
+    
+    return username, instrument, final_start, final_end
+
+def get_calendar_events(creds, past_time):
+    service = build("calendar", "v3", credentials=creds)
+
+    # Define the time range (e.g., from now to one year later)
+    now = past_time.isoformat() + 'Z'  # Convert to ISO format with 'Z' for UTC
+    print(f'Getting events from {now} onwards')
+
+    events_result = service.events().list(
+        calendarId='7262038e2634deb88fae6c4900df5cc42df1f06f06522f3e3fd43a8bc7e4c10a@group.calendar.google.com',  # Use 'primary' for the main calendar
+        timeMin=now,
+        maxResults=2500,  # Adjust maxResults if you have more events
+        singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+
+    events = events_result.get('items', [])
+
+    if not events:
+        print('No upcoming events found.')
+        return []
+
+    event_times = []
+
+    for event in events:
+        start = event['start'].get('dateTime', event['start'].get('date'))
+        end = event['end'].get('dateTime', event['end'].get('date'))
+        summary = event.get('summary', 'No Title')
+        event_times.append({
+            'summary': summary,
+            'start': start,
+            'end': end
+        })
+
+    return event_times
+
 def main(wavenote_file = None):
     """Shows basic usage of the Google Calendar API.
     Prints the start and name of the next 10 events on the user's calendar.
     """
     creds = None
-    count = 0
     final_end = ''
     final_start = ''
     
@@ -72,52 +157,11 @@ def main(wavenote_file = None):
         with open("token.json", "w") as token:
             token.write(creds.to_json())
 
+    past_time = datetime.datetime.utcnow() - datetime.timedelta(days=365)
+    get_calendar_events(creds, past_time)
+
     if wavenote_file:
-        file_folder = os.listdir(os.path.dirname(wavenote_file)) 
-        for name in file_folder:
-            if not '.pxt' in name:
-                file_folder.remove(name)
-        sorted_files = sorted(
-        file_folder,
-        key=lambda x: float(re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x)[-1]) if re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x) else 0
-        ) 
-        length = len(sorted_files)
-        for file in sorted_files:
-            if count == 0:
-                dataset = htmdec_formats.ARPESDataset.from_file(wavenote_file)
-                lines = dataset._metadata.split("\n")
-                folder = wavenote_file + '/../../../../..'
-                path = os.path.normpath(folder)
-                directory_name = os.path.basename(path.rstrip('/\\'))
-                name_array = directory_name.split()
-                for element in name_array:
-                    if element.isdigit():
-                        project_number = element
-                start = [lines[28].split('=')[1].replace('\n',''),lines[29].split('=')[1].replace('\n','')]
-                if project_number:
-                    username = lines[25].split('=')[1] + ' (#' + str(project_number) + ') ARPES'
-                else:
-                    username = lines[25].split('=')[1] + ' (#) ARPES'
-                instrument = lines[23].split('=')[1] + 'was used over this time period'
-            elif count == length - 1:
-                end_file = os.path.join(os.path.dirname(wavenote_file), file)
-                ti_m = os.path.getmtime(end_file)
-                m_ti = time.ctime(ti_m) 
-                if ':' in m_ti.split(' ')[3]:
-                    end_time = m_ti.split(' ')[3]
-                else:
-                    end_time = m_ti.split(' ')[4]
-                if ':' in m_ti.split(' ')[3]:
-                    end_date = m_ti.split(' ')[4] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[2]
-                else:
-                    end_date = m_ti.split(' ')[5] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[3]
-                end = [end_date, end_time]
-            count += 1
-        
-        final_start = get_iso8601(int(start[0].split('-')[0]), int(start[0].split('-')[1]), int(start[0].split('-')[2]), 
-                                  int(start[1].split(':')[0]), int(start[1].split(':')[1]), int(start[1].split(':')[2]), 'America/New_York')
-        final_end = get_iso8601(int(end[0].split('-')[0]), int(end[0].split('-')[1]), int(end[0].split('-')[2]), 
-                                int(end[1].split(':')[0]), int(end[1].split(':')[1]), int(end[1].split(':')[2]), 'America/New_York')
+        username, instrument, final_start, final_end = get_calendar_values(wavenote_file)
 
     try:
         service = build("calendar", "v3", credentials=creds)
