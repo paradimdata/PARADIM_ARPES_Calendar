@@ -84,15 +84,20 @@ def main(wavenote_file = None):
         length = len(sorted_files)
         for file in sorted_files:
             if count == 0:
-                data_file = os.path.join(os.path.dirname(wavenote_file), "data_holder.txt")
                 dataset = htmdec_formats.ARPESDataset.from_file(wavenote_file)
-                with open(data_file, "w") as f:
-                    l = f.write(dataset._metadata)
-                with open(data_file, 'r') as file:
-                    lines = file.readlines()
-                os.remove(data_file)
+                lines = dataset._metadata.split("\n")
+                folder = wavenote_file + '/../../../../..'
+                path = os.path.normpath(folder)
+                directory_name = os.path.basename(path.rstrip('/\\'))
+                name_array = directory_name.split()
+                for element in name_array:
+                    if element.isdigit():
+                        project_number = element
                 start = [lines[28].split('=')[1].replace('\n',''),lines[29].split('=')[1].replace('\n','')]
-                username = lines[25].split('=')[1] + ' (#) ARPES'
+                if project_number:
+                    username = lines[25].split('=')[1] + ' (#' + str(project_number) + ') ARPES'
+                else:
+                    username = lines[25].split('=')[1] + ' (#) ARPES'
                 instrument = lines[23].split('=')[1] + 'was used over this time period'
             elif count == length - 1:
                 end_file = os.path.join(os.path.dirname(wavenote_file), file)
