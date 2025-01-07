@@ -1,4 +1,5 @@
 import datetime
+import traceback
 import os.path
 import htmdec_formats
 import os
@@ -6,6 +7,8 @@ import time
 import pytz
 import argparse
 import re
+import sys
+from dateutil import parser
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -44,8 +47,9 @@ def get_iso8601(year, month, day, hour, minute, second, timezone_str):
 
 def get_calendar_values(wavenote_file):
     count = 0
+    full_path = os.path.abspath(wavenote_file)
+    file_folder = os.listdir(os.path.dirname(full_path))
 
-    file_folder = os.listdir(os.path.dirname(wavenote_file)) 
     for name in file_folder:
         if not '.pxt' in name:
             file_folder.remove(name)
@@ -53,15 +57,17 @@ def get_calendar_values(wavenote_file):
     file_folder,
     key=lambda x: float(re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x)[-1]) if re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x) else 0
     ) 
+
     length = len(sorted_files)
     for file in sorted_files:
         if count == 0:
-            dataset = htmdec_formats.ARPESDataset.from_file(wavenote_file)
+            dataset = htmdec_formats.ARPESDataset.from_file(os.path.dirname(full_path) + '/' + file)
             lines = dataset._metadata.split("\n")
             folder = wavenote_file + '/../../../../..'
             path = os.path.normpath(folder)
             directory_name = os.path.basename(path.rstrip('/\\'))
             name_array = directory_name.split()
+
             for element in name_array:
                 if element.isdigit():
                     project_number = element
@@ -71,6 +77,7 @@ def get_calendar_values(wavenote_file):
             else:
                 username = lines[25].split('=')[1] + ' (#) ARPES'
             instrument = lines[23].split('=')[1] + 'was used over this time period'
+
         elif count == length - 1:
             end_file = os.path.join(os.path.dirname(wavenote_file), file)
             ti_m = os.path.getmtime(end_file)
@@ -92,18 +99,44 @@ def get_calendar_values(wavenote_file):
                             int(end[1].split(':')[0]), int(end[1].split(':')[1]), int(end[1].split(':')[2]), 'America/New_York')
     
     return username, instrument, final_start, final_end
+    
+def input_arpes_event(username, instrument, final_start, final_end, creds):
+    try:
+        service = build("calendar", "v3", credentials=creds)
+
+        event = {
+        'summary': username,
+        'location': '343 Campus Road, Ithaca, NY 14853',
+        'description': instrument,
+        'start': {
+            'dateTime': final_start,
+            'timeZone': 'America/New_York',
+        },
+        'end': {
+            'dateTime': final_end,
+            'timeZone': 'America/New_York',
+        }
+        }
+        event = service.events().insert(calendarId='7262038e2634deb88fae6c4900df5cc42df1f06f06522f3e3fd43a8bc7e4c10a@group.calendar.google.com', body=event).execute()
+        print('Event created: %s' % (event.get('htmlLink')))
+
+    except HttpError as error:
+        print(f"An error occurred: {error}")
 
 def get_calendar_events(creds, past_time):
     service = build("calendar", "v3", credentials=creds)
 
-    # Define the time range (e.g., from now to one year later)
-    now = past_time.isoformat() + 'Z'  # Convert to ISO format with 'Z' for UTC
+    # Convert `past_time` to ISO 8601 format
+    if past_time.tzinfo is not None:  # Check if datetime is timezone-aware
+        now = past_time.astimezone(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+    else:
+        now = past_time.isoformat() + 'Z'
     print(f'Getting events from {now} onwards')
 
     events_result = service.events().list(
-        calendarId='7262038e2634deb88fae6c4900df5cc42df1f06f06522f3e3fd43a8bc7e4c10a@group.calendar.google.com',  # Use 'primary' for the main calendar
+        calendarId='7262038e2634deb88fae6c4900df5cc42df1f06f06522f3e3fd43a8bc7e4c10a@group.calendar.google.com',
         timeMin=now,
-        maxResults=2500,  # Adjust maxResults if you have more events
+        maxResults=2500,
         singleEvents=True,
         orderBy='startTime'
     ).execute()
@@ -128,20 +161,52 @@ def get_calendar_events(creds, past_time):
 
     return event_times
 
-def main(wavenote_file = None):
-    """Shows basic usage of the Google Calendar API.
-    Prints the start and name of the next 10 events on the user's calendar.
-    """
+def parse_datetime(dt_str):
+    try:
+        # Use dateutil.parser for robust ISO 8601 parsing
+        dt = parser.isoparse(dt_str)
+    except (ValueError, ImportError):
+        # Handle basic date format (e.g., 'YYYY-MM-DD') if `isoparse` fails
+        try:
+            dt = datetime.strptime(dt_str, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError(f"Unsupported datetime format: {dt_str}")
+    
+    # Normalize to offset-naive if timezone info is present
+    return dt.replace(tzinfo=None)
+
+def duplicate_check(data, time1,time2):
+    # Parse the times to check
+    time1_dt = parse_datetime(time1)
+    time2_dt = parse_datetime(time2)
+
+    # Variable to track if both times are in the same event
+    common_event = None
+
+    # Check each event
+    for event in data:
+        # Parse start and end times
+        start_dt = parse_datetime(event['start'])
+        end_dt = parse_datetime(event['end'])
+
+        # Check if both times fall within the same event
+        if start_dt <= time1_dt <= end_dt and start_dt <= time2_dt <= end_dt:
+            common_event = event
+            break
+
+    # Output the result
+    if common_event:
+        return False
+    else:
+        return True
+
+def main(wavenote_file=None, wavenote_folder=None):
     creds = None
     final_end = ''
     final_start = ''
     
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         try:
             if creds and creds.expired and creds.refresh_token:
@@ -153,43 +218,49 @@ def main(wavenote_file = None):
                 "credentials.json", SCOPES
             )
             creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
         with open("token.json", "w") as token:
             token.write(creds.to_json())
 
-    past_time = datetime.datetime.utcnow() - datetime.timedelta(days=365)
-    get_calendar_events(creds, past_time)
-
     if wavenote_file:
         username, instrument, final_start, final_end = get_calendar_values(wavenote_file)
+        input_arpes_event(username, instrument, final_start, final_end, creds)
 
-    try:
-        service = build("calendar", "v3", credentials=creds)
+    elif wavenote_folder:
+        # Correct initialization of `past_time` as a datetime object
+        past_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=365)
+        
+        # No need for `.endswith()`, handle string conversion in `get_calendar_events`
+        past_events = get_calendar_events(creds, past_time)
+        filetypes = ['.pxt']
+        filtered_files = []
+        dir = wavenote_folder
 
-        event = {
-        'summary': username,
-        'location': '343 Campus Road, Ithaca, NY 14853',
-        'description': instrument,
-        'start': {
-            'dateTime': final_start,
-            'timeZone': 'America/New_York',
-        },
-        'end': {
-            'dateTime': final_end,
-            'timeZone': 'America/New_York',
-        }
-        }
-        event = service.events().insert(calendarId='7262038e2634deb88fae6c4900df5cc42df1f06f06522f3e3fd43a8bc7e4c10a@group.calendar.google.com', body=event).execute()
-        print('Event created: %s' % (event.get('htmlLink')))
+        for current_folder, subfolders, files in os.walk(dir):
+            # Get the full paths of the matching files
+            matching_files = [os.path.join(current_folder, f) for f in files if any(f.endswith(filetype) for filetype in filetypes)]
+            if matching_files:  # Only add non-empty lists
+                filtered_files.append((current_folder, matching_files))
 
-    except HttpError as error:
-        print(f"An error occurred: {error}")
-
+        for file in filtered_files:
+            try:
+                username, instrument, final_start, final_end = get_calendar_values(os.path.abspath(file[1][0]))
+                print(final_start, final_end)
+                if duplicate_check(past_events, final_start, final_end):
+                    input_arpes_event(username, instrument, final_start, final_end, creds)
+            except Exception as e:
+                print(f"Error processing file {file[1][0]}: {e}")
+                traceback.print_exc()  # Print the full traceback
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ARPES Calendar Event Creator")
+    # Rename the ArgumentParser object to avoid conflict
+    arg_parser = argparse.ArgumentParser(description="ARPES Calendar Event Creator")
+    
     # Adding command-line arguments
-    parser.add_argument('--wavenote', type=str, required=True, help="Path to the wavenote file")
-    args = parser.parse_args()
+    group = arg_parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--wavenote', type=str, help="Path to the wavenote file")
+    group.add_argument('--folder', type=str, help="Path to the directory holding wavenote files")
+    
+    args = arg_parser.parse_args()
+
     # Call the main function with parsed arguments
-    main(args.wavenote)
+    main(wavenote_file=args.wavenote, wavenote_folder=args.folder)
