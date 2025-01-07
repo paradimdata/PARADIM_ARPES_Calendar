@@ -46,6 +46,7 @@ def get_iso8601(year, month, day, hour, minute, second, timezone_str):
     return localized_dt.isoformat()
 
 def get_calendar_values(wavenote_file):
+    project_number = None
     count = 0
     full_path = os.path.abspath(wavenote_file)
     file_folder = os.listdir(os.path.dirname(full_path))
