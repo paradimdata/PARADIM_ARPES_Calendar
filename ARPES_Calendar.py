@@ -47,7 +47,7 @@ def get_iso8601(year, month, day, hour, minute, second, timezone_str):
 
 def get_calendar_values(wavenote_file):
     project_number = None
-    count = 0
+    index = 0
     full_path = os.path.abspath(wavenote_file)
     file_folder = os.listdir(os.path.dirname(full_path))
 
@@ -59,11 +59,13 @@ def get_calendar_values(wavenote_file):
     key=lambda x: float(re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x)[-1]) if re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", x) else 0
     ) 
 
-    length = len(sorted_files)
+    start = []
+    end = []
     for file in sorted_files:
-        if count == 0:
-            dataset = htmdec_formats.ARPESDataset.from_file(os.path.dirname(full_path) + '/' + file)
-            lines = dataset._metadata.split("\n")
+        dataset = htmdec_formats.ARPESDataset.from_file(os.path.dirname(full_path) + '/' + file)
+        lines = dataset._metadata.split("\n")
+
+        if index == 0:
             folder = wavenote_file + '/../../../../..'
             path = os.path.normpath(folder)
             directory_name = os.path.basename(path.rstrip('/\\'))
@@ -72,32 +74,36 @@ def get_calendar_values(wavenote_file):
             for element in name_array:
                 if element.isdigit():
                     project_number = element
-            start = [lines[28].split('=')[1].replace('\n',''),lines[29].split('=')[1].replace('\n','')]
             if project_number:
                 username = lines[25].split('=')[1] + ' (#' + str(project_number) + ') ARPES'
             else:
                 username = lines[25].split('=')[1] + ' (#) ARPES'
             instrument = lines[23].split('=')[1] + 'was used over this time period'
 
-        elif count == length - 1:
-            end_file = os.path.join(os.path.dirname(wavenote_file), file)
-            ti_m = os.path.getmtime(end_file)
-            m_ti = time.ctime(ti_m) 
-            if ':' in m_ti.split(' ')[3]:
-                end_time = m_ti.split(' ')[3]
-            else:
-                end_time = m_ti.split(' ')[4]
-            if ':' in m_ti.split(' ')[3]:
-                end_date = m_ti.split(' ')[4] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[2]
-            else:
-                end_date = m_ti.split(' ')[5] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[3]
-            end = [end_date, end_time]
-        count += 1
+        start.append([lines[28].split('=')[1].replace('\n',''),lines[29].split('=')[1].replace('\n','')])
+        end_file = os.path.join(os.path.dirname(wavenote_file), file)
+        ti_m = os.path.getmtime(end_file)
+        m_ti = time.ctime(ti_m) 
+        if ':' in m_ti.split(' ')[3]:
+            end_time = m_ti.split(' ')[3]
+        else:
+            end_time = m_ti.split(' ')[4]
+        if ':' in m_ti.split(' ')[3]:
+            end_date = m_ti.split(' ')[4] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[2]
+        else:
+            end_date = m_ti.split(' ')[5] + '-' + month_to_num(m_ti.split(' ')[1]) + '-' + m_ti.split(' ')[3]
+        end.append([end_date, end_time])
+        index += 1
     
-    final_start = get_iso8601(int(start[0].split('-')[0]), int(start[0].split('-')[1]), int(start[0].split('-')[2]), 
-                                int(start[1].split(':')[0]), int(start[1].split(':')[1]), int(start[1].split(':')[2]), 'America/New_York')
-    final_end = get_iso8601(int(end[0].split('-')[0]), int(end[0].split('-')[1]), int(end[0].split('-')[2]), 
-                            int(end[1].split(':')[0]), int(end[1].split(':')[1]), int(end[1].split(':')[2]), 'America/New_York')
+    final_start = []
+    final_end = []
+    count = 0
+    while count < len(start):
+        final_start.append(get_iso8601(int(start[count][0].split('-')[0]), int(start[count][0].split('-')[1]), int(start[count][0].split('-')[2]), 
+                            int(start[count][1].split(':')[0]), int(start[count][1].split(':')[1]), int(start[count][1].split(':')[2]), 'America/New_York'))
+        final_end.append(get_iso8601(int(end[count][0].split('-')[0]), int(end[count][0].split('-')[1]), int(end[count][0].split('-')[2]), 
+                            int(end[count][1].split(':')[0]), int(end[count][1].split(':')[1]), int(end[count][1].split(':')[2]), 'America/New_York'))
+        count += 1
     
     return username, instrument, final_start, final_end
     
@@ -132,7 +138,6 @@ def get_calendar_events(creds, past_time):
         now = past_time.astimezone(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
     else:
         now = past_time.isoformat() + 'Z'
-    print(f'Getting events from {now} onwards')
 
     events_result = service.events().list(
         calendarId='7262038e2634deb88fae6c4900df5cc42df1f06f06522f3e3fd43a8bc7e4c10a@group.calendar.google.com',
@@ -145,7 +150,6 @@ def get_calendar_events(creds, past_time):
     events = events_result.get('items', [])
 
     if not events:
-        print('No upcoming events found.')
         return []
 
     event_times = []
@@ -176,6 +180,33 @@ def parse_datetime(dt_str):
     # Normalize to offset-naive if timezone info is present
     return dt.replace(tzinfo=None)
 
+def gather_and_insert_arpes_event(username, instrument, final_start, final_end, creds):
+    start_holder = None
+    end_holder = None
+    for i in range(len(final_start)):
+
+        if not start_holder:
+            start_holder = final_start[i]
+        if not end_holder:
+            end_holder = final_end[i]
+        
+        dt1 = datetime.datetime.fromisoformat(final_start[i])
+        dt2 = datetime.datetime.fromisoformat(end_holder)
+        time_difference = abs(dt1 - dt2)
+        difference_seconds = time_difference.total_seconds()
+
+        if difference_seconds < 86400 and i != len(final_start) - 1:
+            end_holder = final_end[i]
+        elif difference_seconds < 86400 and i == len(final_start) - 1:
+            input_arpes_event(username, instrument, start_holder, final_end[i], creds)
+        elif difference_seconds > 86400 and i != len(final_end) - 1:
+            input_arpes_event(username, instrument, start_holder, end_holder, creds)
+            start_holder = final_start[i]
+            end_holder = final_end[i]
+        else:
+            input_arpes_event(username, instrument, start_holder, end_holder, creds)
+            input_arpes_event(username, instrument, final_start[i], final_end[i], creds)
+
 def duplicate_check(data, time1,time2):
     # Parse the times to check
     time1_dt = parse_datetime(time1)
@@ -191,15 +222,9 @@ def duplicate_check(data, time1,time2):
         end_dt = parse_datetime(event['end'])
 
         # Check if both times fall within the same event
-        if start_dt <= time1_dt <= end_dt and start_dt <= time2_dt <= end_dt:
-            common_event = event
-            break
-
-    # Output the result
-    if common_event:
-        return False
-    else:
-        return True
+        if start_dt == time1_dt and time2_dt == end_dt:
+            return False
+    return True
 
 def main(wavenote_file=None, wavenote_folder=None):
     creds = None
@@ -224,7 +249,8 @@ def main(wavenote_file=None, wavenote_folder=None):
 
     if wavenote_file:
         username, instrument, final_start, final_end = get_calendar_values(wavenote_file)
-        input_arpes_event(username, instrument, final_start, final_end, creds)
+        gather_and_insert_arpes_event(username, instrument, final_start, final_end, creds)
+            
 
     elif wavenote_folder:
         # Correct initialization of `past_time` as a datetime object
@@ -245,9 +271,8 @@ def main(wavenote_file=None, wavenote_folder=None):
         for file in filtered_files:
             try:
                 username, instrument, final_start, final_end = get_calendar_values(os.path.abspath(file[1][0]))
-                print(final_start, final_end)
-                if duplicate_check(past_events, final_start, final_end):
-                    input_arpes_event(username, instrument, final_start, final_end, creds)
+                if duplicate_check(past_events, final_start[0], final_end[-1]):
+                    gather_and_insert_arpes_event(username, instrument, final_start, final_end, creds)
             except Exception as e:
                 print(f"Error processing file {file[1][0]}: {e}")
                 traceback.print_exc()  # Print the full traceback
