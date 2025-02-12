@@ -284,9 +284,9 @@ def main(wavenote_file=None, wavenote_folder=None):
 
     if wavenote_file and wavenote_folder:
         raise ValueError("ERROR: Can only have one input type at a time")
-    if not str(wavenote_file).endswith('.pxt'):
+    if wavenote_file and not str(wavenote_file).endswith('.pxt'):
         raise ValueError("ERROR: wavenote_file input must end with '.pxt'")
-    if os.path.isfile(wavenote_file) is False:
+    if wavenote_file and os.path.isfile(wavenote_file) is False:
         raise ValueError("ERROR: bad input. Expected file")
     if wavenote_folder and not os.path.isdir(wavenote_folder):
         raise ValueError("ERROR: wavenote folder must be a folder")
