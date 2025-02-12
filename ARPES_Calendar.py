@@ -288,9 +288,9 @@ def main(wavenote_file=None, wavenote_folder=None):
         raise ValueError("ERROR: wavenote_file input must end with '.pxt'")
     if os.path.isfile(wavenote_file) is False:
         raise ValueError("ERROR: bad input. Expected file")
-    if not os.path.isdir(wavenote_folder):
+    if wavenote_folder and not os.path.isdir(wavenote_folder):
         raise ValueError("ERROR: wavenote folder must be a folder")
-    if os.listdir(wavenote_folder) == 0:
+    if wavenote_folder and os.listdir(wavenote_folder) == 0:
         raise ValueError("ERROR: bad input. Wavenote folder should contain files")
 
     # Initialize variables
